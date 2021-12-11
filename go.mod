@@ -1,4 +1,4 @@
-module github.com/tdewolff/canvas
+module github.com/blackss2/canvas
 
 require (
 	fyne.io/fyne/v2 v2.1.0
