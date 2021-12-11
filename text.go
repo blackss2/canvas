@@ -808,7 +808,7 @@ func (t *Text) MaxWordCountPerLine() int {
 	for _, line := range t.lines {
 		wordCount := 0
 		for _, span := range line.spans {
-			wordCount += len(span.Text) - strings.Count(span.Text, "\n")
+			wordCount += utf8.RuneCountInString(span.Text) - strings.Count(span.Text, "\n")
 		}
 		if maxCount < wordCount {
 			maxCount = wordCount
