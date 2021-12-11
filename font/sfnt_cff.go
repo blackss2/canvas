@@ -64,6 +64,8 @@ func (sfnt *SFNT) parseCFF() error {
 	if err != nil {
 		return fmt.Errorf("CFF: Top DICT: %w", err)
 	}
+	topDICT.IsCID = false // CID can be rendered
+	
 	if topDICT.IsCID {
 		return fmt.Errorf("CFF: CID fonts not supported")
 	} else if topDICT.CharstringType != 2 {
