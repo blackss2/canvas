@@ -801,3 +801,18 @@ func (t *Text) LineCount() int {
 	}
 	return count
 }
+
+// MaxWordCountPerLine returns a maximum number of words in a line
+func (t *Text) MaxWordCountPerLine() int {
+	maxCount := 0
+	for _, line := range t.lines {
+		wordCount := 0
+		for _, span := range line.spans {
+			wordCount += len(span.Text) - strings.Count(span.Text, "\n")
+		}
+		if maxCount < wordCount {
+			maxCount = wordCount
+		}
+	}
+	return maxCount
+}
