@@ -790,3 +790,14 @@ func (t *Text) RenderAsPath(r Renderer, m Matrix, resolution Resolution) {
 		}
 	}
 }
+
+// Lines returns a number of lines
+func (t *Text) LineCount() int {
+	count := 0
+	for _, line := range t.lines {
+		if len(line.spans) > 0 {
+			count++
+		}
+	}
+	return count
+}
