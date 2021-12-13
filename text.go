@@ -1,16 +1,44 @@
 package canvas
 
 import (
-	"image/color"
 	"math"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
-	canvasText "github.com/tdewolff/canvas/text"
+	canvasText "github.com/blackss2/canvas/text"
 )
+
+const mmPerPt = 25.4 / 72.0
+const mmPerInch = 25.4
+const inchPerMm = 1.0 / 25.4
+
+// Resolution is used for rasterizing. Higher resolutions will result in larger images.
+type Resolution float64
+
+// DPMM (dots-per-millimeter) for the resolution of rasterization.
+func DPMM(dpmm float64) Resolution {
+	return Resolution(dpmm)
+}
+
+// DPI (dots-per-inch) for the resolution of rasterization.
+func DPI(dpi float64) Resolution {
+	return Resolution(dpi * inchPerMm)
+}
+
+// DPMM returns the resolution in dots-per-millimeter.
+func (res Resolution) DPMM() float64 {
+	return float64(res)
+}
+
+// DPI returns the resolution in dots-per-inch.
+func (res Resolution) DPI() float64 {
+	return float64(res) * mmPerInch
+}
+
+// DefaultResolution is the default resolution used for font PPEMs and is set to 96 DPI.
+const DefaultResolution = Resolution(96.0 * inchPerMm)
 
 // TextAlign specifies how the text should align or whether it should be justified.
 type TextAlign int
@@ -576,30 +604,6 @@ func (t *Text) Bounds() Rect {
 	return rect
 }
 
-// OutlineBounds returns the rectangle that contains the entire text box, i.e. the glyph outlines (slow).
-func (t *Text) OutlineBounds() Rect {
-	if len(t.lines) == 0 || len(t.lines[0].spans) == 0 {
-		return Rect{}
-	}
-	r := Rect{}
-	for _, line := range t.lines {
-		for _, span := range line.spans {
-			// TODO: vertical text
-			p, _, err := span.Face.toPath(span.Glyphs, span.Face.PPEM(DefaultResolution))
-			if err != nil {
-				panic(err)
-			}
-			spanBounds := p.Bounds()
-			spanBounds = spanBounds.Move(Point{span.x, -line.y})
-			r = r.Add(spanBounds)
-		}
-	}
-	t.WalkDecorations(func(col color.RGBA, p *Path) {
-		r = r.Add(p.Bounds())
-	})
-	return r
-}
-
 // Fonts returns the list of fonts used.
 func (t *Text) Fonts() []*Font {
 	fonts := []*Font{}
@@ -615,180 +619,6 @@ func (t *Text) Fonts() []*Font {
 		fonts = append(fonts, fontMap[name])
 	}
 	return fonts
-}
-
-// MostCommonFontFace returns the most common FontFace of the text.
-//func (t *Text) MostCommonFontFace() FontFace {
-//	families := map[*FontFamily]int{}
-//	sizes := map[float64]int{}
-//	styles := map[FontStyle]int{}
-//	variants := map[FontVariant]int{}
-//	colors := map[color.RGBA]int{}
-//	for _, line := range t.lines {
-//		for _, span := range line.spans {
-//			families[span.Face.family]++
-//			sizes[span.Face.Size]++
-//			styles[span.Face.Style]++
-//			variants[span.Face.Variant]++
-//			colors[span.Face.Color]++
-//		}
-//	}
-//	if len(families) == 0 {
-//		return FontFace{}
-//	}
-//
-//	family, size, style, variant, col := (*FontFamily)(nil), 0.0, FontRegular, FontNormal, Black
-//	for key, val := range families {
-//		if families[family] < val {
-//			family = key
-//		}
-//	}
-//	for key, val := range sizes {
-//		if sizes[size] < val {
-//			size = key
-//		}
-//	}
-//	for key, val := range styles {
-//		if styles[style] < val {
-//			style = key
-//		}
-//	}
-//	for key, val := range variants {
-//		if variants[variant] < val {
-//			variant = key
-//		}
-//	}
-//	for key, val := range colors {
-//		if colors[col] < val {
-//			col = key
-//		}
-//	}
-//	return family.Face(size*ptPerMm, col, style, variant)
-//}
-
-type decorationSpan struct {
-	deco  FontDecorator
-	col   color.RGBA
-	x     float64
-	width float64
-	face  *FontFace // biggest face
-}
-
-// WalkDecorations calls the callback for each color of decoration used per line.
-func (t *Text) WalkDecorations(callback func(col color.RGBA, deco *Path)) {
-	// TODO: vertical text
-	// accumulate paths with colors for all lines
-	cs := []color.RGBA{}
-	ps := []*Path{}
-	for _, line := range t.lines {
-		// track active decorations, when finished draw and append to accumulated paths
-		active := []decorationSpan{}
-		for k, span := range line.spans {
-			foundActive := make([]bool, len(active))
-			for _, spanDeco := range span.Face.Deco {
-				found := false
-				for i, deco := range active {
-					if span.Face.Color == deco.col && reflect.DeepEqual(deco.deco, spanDeco) {
-						// extend decoration
-						active[i].width = span.x + span.Width - active[i].x
-						if active[i].face.Size < span.Face.Size {
-							active[i].face = span.Face
-						}
-						foundActive[i] = true
-						found = true
-						break
-					}
-				}
-				if !found {
-					// add new decoration
-					active = append(active, decorationSpan{
-						deco:  spanDeco,
-						col:   span.Face.Color,
-						x:     span.x,
-						width: span.Width,
-						face:  span.Face,
-					})
-				}
-			}
-
-			if k == len(line.spans)-1 {
-				foundActive = make([]bool, len(active))
-			}
-
-			di := 0
-			for i, found := range foundActive {
-				if !found {
-					// remove active decoration and draw it
-					decoSpan := active[i-di]
-					xOffset := span.Face.mmPerEm * float64(span.Face.XOffset)
-					yOffset := span.Face.mmPerEm * float64(span.Face.YOffset)
-					p := decoSpan.deco.Decorate(decoSpan.face, decoSpan.width)
-					p = p.Translate(decoSpan.x+xOffset, -line.y+yOffset)
-
-					foundColor := false
-					for j, col := range cs {
-						if col == decoSpan.col {
-							ps[j] = ps[j].Append(p)
-							foundColor = true
-						}
-					}
-					if !foundColor {
-						cs = append(cs, decoSpan.col)
-						ps = append(ps, p)
-					}
-
-					active = append(active[:i-di], active[i-di+1:]...)
-					di++
-				}
-			}
-		}
-	}
-
-	for i := 0; i < len(ps); i++ {
-		callback(cs[i], ps[i])
-	}
-}
-
-// WalkSpans calls the callback for each text span per line.
-func (t *Text) WalkSpans(callback func(x, y float64, span TextSpan)) {
-	for _, line := range t.lines {
-		for _, span := range line.spans {
-			xOffset := span.Face.mmPerEm * float64(span.Face.XOffset)
-			yOffset := span.Face.mmPerEm * float64(span.Face.YOffset)
-			if t.Mode == HorizontalTB {
-				callback(span.x+xOffset, -line.y+yOffset, span)
-			} else {
-				callback(line.y+xOffset, -span.x+yOffset, span)
-			}
-		}
-	}
-}
-
-// RenderAsPath renders the text and its decorations converted to paths, calling r.RenderPath.
-func (t *Text) RenderAsPath(r Renderer, m Matrix, resolution Resolution) {
-	t.WalkDecorations(func(col color.RGBA, p *Path) {
-		style := DefaultStyle
-		style.FillColor = col
-		r.RenderPath(p, style, m)
-	})
-
-	for _, line := range t.lines {
-		for _, span := range line.spans {
-			x, y := span.x, -line.y
-			if t.Mode != HorizontalTB {
-				x, y = line.y, -span.x
-			}
-
-			style := DefaultStyle
-			style.FillColor = span.Face.Color
-			p, _, err := span.Face.toPath(span.Glyphs, span.Face.PPEM(resolution))
-			if err != nil {
-				panic(err)
-			}
-			p = p.Translate(x, y)
-			r.RenderPath(p, style, m)
-		}
-	}
 }
 
 // Lines returns a number of lines
